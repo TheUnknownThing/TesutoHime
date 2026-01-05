@@ -587,93 +587,6 @@ def set_result(submission_id):
     return ''
 
 
-@web.route('/problem/<problem:problem>/rank')
-@require_logged_in
-def problem_rank(problem: Problem):
-    sort_parameter = request.args.get('sort')
-
-    submissions = JudgeManager.list_accepted_submissions(problem.id)
-    real_name_map = {}
-    languages = {}
-    for submission in submissions:
-        stuid = submission.user.student_id
-        if stuid not in real_name_map:
-            real_name_map[stuid] = RealnameManager.query_realname_for_current_user(stuid)
-        languages[submission] = 'Unknown' if submission.language not in language_info \
-            else language_info[submission.language].name
-    has_real_name = any(len(real_name_map[x]) > 0 for x in real_name_map)
-
-    if sort_parameter == 'memory':
-        submissions = sorted(submissions, key=lambda x: x.memory_bytes if x.memory_bytes is not None else 0)
-    elif sort_parameter == 'submit_time':
-        submissions = sorted(submissions, key=lambda x: x.created_at)
-    else:
-        sort_parameter = 'time'
-        submissions = sorted(submissions, key=lambda x: x.time_msecs if x.time_msecs is not None else 0)
-
-    return render_template('problem_rank.html', problem=problem,
-                           submissions=submissions, Sorting=sort_parameter,
-                           real_name_map=real_name_map, has_real_name=has_real_name,
-                           languages=languages)
-
-
-@web.route('/problem/<problem:problem>/discuss', methods=['GET', 'POST'])
-@require_logged_in
-def problem_discuss(problem: Problem):
-    if request.method == 'GET':
-        if g.in_exam:  # Problem in Contest or Homework and Current User is NOT administrator
-            return render_template('problem_discussion.html', problem=problem,
-                                   Blocked=True)  # Discussion Closed
-        data = problem.discussions
-        discussions = []
-        for ele in data:
-            tmp = [ele.id, ele.user.username, ele.data, readable_time(ele.created_at)]
-            # tmp[4]: editable
-            tmp.append(ele.user_id == g.user.id or g.user.privilege >= Privilege.SUPER)
-            discussions.append(tmp)
-        return render_template('problem_discussion.html', problem=problem,
-                               Discuss=discussions)
-    else:
-        try:
-            form = request.json
-            if form is None:
-                abort(BAD_REQUEST)
-            action = form.get('action')  # post, edit, delete
-            if action == 'post':
-                text = form.get('text')
-                if ProblemManager.can_write(problem):
-                    DiscussManager.add_discuss(problem.id, g.user, text)
-                    return ReturnCode.SUC
-                else:
-                    return ReturnCode.ERR_PERMISSION_DENIED
-            if action == 'edit':
-                discuss_id = int(form.get('discuss_id'))
-                discussion = DiscussManager.get_discussion(discuss_id)
-                if discussion is None:
-                    return ReturnCode.ERR_PERMISSION_DENIED
-                text = form.get('text')
-                if g.user.id == discussion.user_id or ProblemManager.can_write(problem):
-                    discussion.data = text
-                    return ReturnCode.SUC
-                else:
-                    return ReturnCode.ERR_PERMISSION_DENIED
-            if action == 'delete':
-                discuss_id = int(form.get('discuss_id'))
-                discussion = DiscussManager.get_discussion(discuss_id)
-                if discussion is None:
-                    return ReturnCode.ERR_PERMISSION_DENIED
-                if g.user.id == discussion.user_id or ProblemManager.can_write(problem):
-                    DiscussManager.delete_discuss(discussion)
-                    return ReturnCode.SUC
-                else:
-                    return ReturnCode.ERR_PERMISSION_DENIED
-            else:  # what happened?
-                return ReturnCode.ERR_BAD_DATA
-        except KeyError:
-            return ReturnCode.ERR_BAD_DATA
-        except TypeError:
-            return ReturnCode.ERR_BAD_DATA
-
 def reads_problem(func):
     @wraps(func)
     def wrapped(problem, *args, **kwargs):
@@ -796,6 +709,14 @@ def problem_attachment(problem: Problem, name: str):
 @web.route('/status')
 @require_logged_in
 def status():
+    # For non-admin users, only show their own submissions
+    if not g.is_admin:
+        # Force the username parameter to be the current user's username
+        from werkzeug.datastructures import ImmutableMultiDict
+        forced_args = dict(request.args)
+        forced_args['username'] = g.user.username
+        request.args = ImmutableMultiDict(forced_args)
+
     res = paged_search_limitoffset(JudgeConfig.Judge_Each_Page, JudgeManager.SubmissionSearch)
     submissions = res.entities
 
@@ -808,12 +729,19 @@ def status():
                 RealnameManager.query_realname_for_current_user(submission.user.student_id)
         show_links[submission] = JudgeManager.can_show(submission)
         show_title[submission] = ProblemManager.can_show(submission.problem)
+
+    # For non-admin users, hide the search form since they can only see their own submissions
+    args_for_template = dict(filter(lambda e: e[0] != 'page', request.args.items()))
+    if not g.is_admin:
+        # Remove the username from displayed args so it doesn't show in the search form
+        args_for_template.pop('username', None)
+
     return render_template('status.html', pages=gen_page(res.page, res.max_page),
                            submissions=submissions,
                            real_name_map=real_name_map,
                            show_links=show_links,
                            show_title=show_title,
-                           args=dict(filter(lambda e: e[0] != 'page', request.args.items())))
+                           args=args_for_template)
 
 
 def code_old(run_id):
@@ -1570,8 +1498,19 @@ def process_settings_api():
     else:
         alert_fail(f'Unknown action {action}')
 
+
+# admin
+
+def require_admin(func):
+    @wraps(func)
+    def wrapped(*args, **kwargs):
+        if not g.is_admin:
+            abort(FORBIDDEN)
+        return func(*args, **kwargs)
+    return wrapped
+
 @web.route('/settings/api', methods=['GET', 'POST'])
-@require_logged_in
+@require_admin
 def settings_api():
     if request.method == 'POST':
         process_settings_api()
@@ -1592,16 +1531,6 @@ def settings_api():
 
     return render_template('settings_api.html', apps=apps_info, pats=pats)
 
-
-# admin
-
-def require_admin(func):
-    @wraps(func)
-    def wrapped(*args, **kwargs):
-        if not g.is_admin:
-            abort(FORBIDDEN)
-        return func(*args, **kwargs)
-    return wrapped
 
 @ignore_alert_fail
 def process_admin():
@@ -1722,6 +1651,7 @@ def admin_pic_url():
 help_cache: Dict[str, Optional[str]] = {}
 
 @web.route('/help/<path:page>')
+@require_admin
 def help(page):
     if re.search(r'[^-a-zA-Z0-9_/]', page) is not None or page[0] == '/':
         abort(NOT_FOUND)
@@ -1743,7 +1673,96 @@ def help(page):
         title = match_title.group(1)
     return render_template('help.html', title=title, content=content)
 
+
+@web.route('/problem/<problem:problem>/rank')
+@require_admin
+def problem_rank(problem: Problem):
+    sort_parameter = request.args.get('sort')
+
+    submissions = JudgeManager.list_accepted_submissions(problem.id)
+    real_name_map = {}
+    languages = {}
+    for submission in submissions:
+        stuid = submission.user.student_id
+        if stuid not in real_name_map:
+            real_name_map[stuid] = RealnameManager.query_realname_for_current_user(stuid)
+        languages[submission] = 'Unknown' if submission.language not in language_info \
+            else language_info[submission.language].name
+    has_real_name = any(len(real_name_map[x]) > 0 for x in real_name_map)
+
+    if sort_parameter == 'memory':
+        submissions = sorted(submissions, key=lambda x: x.memory_bytes if x.memory_bytes is not None else 0)
+    elif sort_parameter == 'submit_time':
+        submissions = sorted(submissions, key=lambda x: x.created_at)
+    else:
+        sort_parameter = 'time'
+        submissions = sorted(submissions, key=lambda x: x.time_msecs if x.time_msecs is not None else 0)
+
+    return render_template('problem_rank.html', problem=problem,
+                           submissions=submissions, Sorting=sort_parameter,
+                           real_name_map=real_name_map, has_real_name=has_real_name,
+                           languages=languages)
+
+
+@web.route('/problem/<problem:problem>/discuss', methods=['GET', 'POST'])
+@require_admin
+def problem_discuss(problem: Problem):
+    if request.method == 'GET':
+        if g.in_exam:  # Problem in Contest or Homework and Current User is NOT administrator
+            return render_template('problem_discussion.html', problem=problem,
+                                   Blocked=True)  # Discussion Closed
+        data = problem.discussions
+        discussions = []
+        for ele in data:
+            tmp = [ele.id, ele.user.username, ele.data, readable_time(ele.created_at)]
+            # tmp[4]: editable
+            tmp.append(ele.user_id == g.user.id or g.user.privilege >= Privilege.SUPER)
+            discussions.append(tmp)
+        return render_template('problem_discussion.html', problem=problem,
+                               Discuss=discussions)
+    else:
+        try:
+            form = request.json
+            if form is None:
+                abort(BAD_REQUEST)
+            action = form.get('action')  # post, edit, delete
+            if action == 'post':
+                text = form.get('text')
+                if ProblemManager.can_write(problem):
+                    DiscussManager.add_discuss(problem.id, g.user, text)
+                    return ReturnCode.SUC
+                else:
+                    return ReturnCode.ERR_PERMISSION_DENIED
+            if action == 'edit':
+                discuss_id = int(form.get('discuss_id'))
+                discussion = DiscussManager.get_discussion(discuss_id)
+                if discussion is None:
+                    return ReturnCode.ERR_PERMISSION_DENIED
+                text = form.get('text')
+                if g.user.id == discussion.user_id or ProblemManager.can_write(problem):
+                    discussion.data = text
+                    return ReturnCode.SUC
+                else:
+                    return ReturnCode.ERR_PERMISSION_DENIED
+            if action == 'delete':
+                discuss_id = int(form.get('discuss_id'))
+                discussion = DiscussManager.get_discussion(discuss_id)
+                if discussion is None:
+                    return ReturnCode.ERR_PERMISSION_DENIED
+                if g.user.id == discussion.user_id or ProblemManager.can_write(problem):
+                    DiscussManager.delete_discuss(discussion)
+                    return ReturnCode.SUC
+                else:
+                    return ReturnCode.ERR_PERMISSION_DENIED
+            else:  # what happened?
+                return ReturnCode.ERR_BAD_DATA
+        except KeyError:
+            return ReturnCode.ERR_BAD_DATA
+        except TypeError:
+            return ReturnCode.ERR_BAD_DATA
+
 @web.route('/help/')
+@require_admin
 def help_index():
     return help('index')
 
@@ -1796,6 +1815,33 @@ class SubmissionConverter(ModelConverter):
         g.can_write = JudgeManager.can_write(submission)
         g.can_abort = JudgeManager.can_abort(submission)
         return submission
+    
+    def to_python(self, value: str):
+        setup_appcontext()
+        if g.user is None:
+            not_logged_in()
+        # First try to parse as integer (for admins or direct access)
+        try:
+            model_id = int(value)
+            return self.get(model_id)
+        except ValueError:
+            pass
+        # If not an integer, try to deobfuscate (for non-admin users)
+        model_id = utils.deobfuscate_submission_id(value)
+        if model_id is None:
+            abort_converter(NOT_FOUND, 'invalid submission id')
+        return self.get(model_id)
+    
+    def to_url(self, value) -> str:
+        # For non-admin users, obfuscate the submission ID in URLs
+        if isinstance(value, int):
+            submission_id = value
+        else:
+            submission_id = value.id
+        # Check if current user is admin - if not, obfuscate the URL
+        if hasattr(g, 'is_admin') and g.is_admin:
+            return str(submission_id)
+        return utils.obfuscate_submission_id(submission_id)
 
 class ContestConverter(ModelConverter):
     def get(self, model_id: int) -> Contest:

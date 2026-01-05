@@ -22,7 +22,7 @@ from web.manager.judge import JudgeManager
 from web.manager.oauth import OauthManager
 from web.manager.old_judge import OldJudgeManager
 from web.manager.problem import ProblemManager
-from web.utils import abort_json, db, paged_search_cursor, require_logged_in
+from web.utils import abort_json, db, obfuscate_submission_id, paged_search_cursor, require_logged_in
 
 api = Blueprint('api', __name__)
 
@@ -106,8 +106,10 @@ def problem_brief(problem: Problem):
 
 def submission_brief(submission: JudgeRecordV2):
     can_show = JudgeManager.can_show(submission)
+    # For non-admin users, obfuscate the submission ID
+    display_id = submission.id if g.is_admin else obfuscate_submission_id(submission.id)
     return {
-        'id': submission.id,
+        'id': display_id,
         'friendly_name': submission.user.friendly_name,
         'problem': problem_brief(submission.problem),
         'status': submission.status.name,
@@ -296,7 +298,9 @@ def problem_submit(problem: Problem):
     if not JudgeManager.can_create(problem, public, language, code):
         abort_json(BAD_REQUEST, 'unable to create submission')
     submission = JudgeManager.create_submission(public=public, language=language, user=g.user, problem_id=problem.id, code=code)
-    resp = jsonify({ 'id': submission.id })
+    # For non-admin users, obfuscate the submission ID
+    display_id = submission.id if g.is_admin else obfuscate_submission_id(submission.id)
+    resp = jsonify({ 'id': display_id })
     resp.status_code = CREATED
     resp.headers.set('Location', url_for('.submission', submission=submission))
     return resp
@@ -304,6 +308,13 @@ def problem_submit(problem: Problem):
 @api.route('/submission/')
 @scope('submission:read')
 def submission_list():
+    # For non-admin users, only show their own submissions
+    if not g.is_admin:
+        from werkzeug.datastructures import ImmutableMultiDict
+        forced_args = dict(request.args)
+        forced_args['username'] = g.user.username
+        request.args = ImmutableMultiDict(forced_args)
+    
     res = paged_search_cursor(JudgeConfig.Judge_Each_Page, JudgeManager.SubmissionSearch)
     submissions = [submission_brief(s) for s in res.entities]
     return jsonify({
@@ -315,7 +326,10 @@ def submission_list():
 @scope('submission:read')
 def submission(submission: JudgeRecordV2):
     details = JudgeManager.get_details(submission)
+    # For non-admin users, obfuscate the submission ID
+    display_id = submission.id if g.is_admin else obfuscate_submission_id(submission.id)
     res = {
+        'id': display_id,
         'problem': problem_brief(submission.problem),
         'details': details,
         'status': submission.status.name,
@@ -327,7 +341,7 @@ def submission(submission: JudgeRecordV2):
         'abort_url': url_for('.submission_abort', submission=submission) if g.can_abort else None,
         'html_url': url_for('web.submission', submission=submission),
     }
-    keys = ['id', 'public', 'language', 'score', 'message', 'time_msecs', 'memory_bytes']
+    keys = ['public', 'language', 'score', 'message', 'time_msecs', 'memory_bytes']
     for key in keys:
         res[key] = getattr(submission, key)
     return jsonify(res)

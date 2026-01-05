@@ -120,7 +120,7 @@ async def run_with_limits(
     setup_root_dir: Optional[Callable[[PosixPath], Coroutine[Any, Any, None]]] = None,
 ) -> RunResult:
     # these are nsjail args
-    fsize = 'inf' if limits.file_size_bytes < 0 else \
+    fsize = '1048576' if limits.file_size_bytes < 0 else \
         str(ceil(limits.file_size_bytes / 1048576 + 256))
     time_limit_scaled = limits.time_msecs * relative_slowness
     time_limit_nsjail = str(ceil(time_limit_scaled / 1000 * time_tolerance_ratio + 1))

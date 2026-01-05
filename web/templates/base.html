@@ -40,16 +40,18 @@
                     </div>
                 </div>
                 <ul class="navbar-nav" style="line-height: 1;">
+                    {% if g.is_admin %}
                     <li class="nav-item"><a href="{{ url_for('web.problem_list') }}" class="nav-link">题库</a></li>
                     <li class="nav-item"><a href="{{ url_for('web.course_list') }}" class="nav-link">班级</a></li>
                     <li class="nav-item"><a href="{{ url_for('web.contest_list') }}" class="nav-link">比赛</a></li>
                     <li class="nav-item"><a href="{{ url_for('web.homework_list') }}" class="nav-link">作业</a></li>
+                    {% endif %}
                     <li class="nav-item"><a href="{{ url_for('web.status') }}" class="nav-link">评测状态</a></li>
                     {% if g.is_admin %}
                     <li class="nav-item"><a href="{{ url_for('web.admin') }}" class="nav-link">管理</a></li>
+                    <li class="nav-item"><a href="{{ url_for('web.help_index') }}" class="nav-link">帮助</a></li>
                     {% endif %}
                     <li class="nav-item"><a href="{{ url_for('web.about') }}" class="nav-link">关于</a></li>
-                    <li class="nav-item"><a href="{{ url_for('web.help_index') }}" class="nav-link">帮助</a></li>
                     {% if g.user is None -%}
                     <li class="dropdown-divider"></li>
                     {%- set next = request.full_path -%}

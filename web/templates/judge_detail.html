@@ -12,7 +12,7 @@
 
 {% block content %}
 <div class="card card-body">
-    <h1>评测详情 {{ submission.id }}</h1>
+    <h1>评测详情 {% if g.is_admin %}{{ submission.id }}{% else %}{{ g.utils.obfuscate_submission_id(submission.id) }}{% endif %}</h1>
 
     <div id="overview" class="d-contents">
         {{ status_table([submission], real_name_map={ submission.user.student_id: real_name }, show_links={ submission: False }, show_title={ submission: True }, show_time=submission.time_msecs is not None, show_memory=submission.memory_bytes is not None, show_score=show_score) }}

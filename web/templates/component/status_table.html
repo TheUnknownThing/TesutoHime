@@ -4,7 +4,7 @@
 		<thead>
 			<tr>
 				<th>编号</th>
-				<th class="status-list__user">昵称{% if g.is_admin -%}<span class="small">（点击查看用户名）</span>{%- endif %}</th>
+				{% if g.is_admin %}<th class="status-list__user">昵称{% if g.is_admin -%}<span class="small">（点击查看用户名）</span>{%- endif %}</th>{% endif %}
 				<th class="status-list__problem">题目</th>
 				<th><span class="mr-2">评测状态</span><a href="{{ url_for('.help', page='view-submit-and-judge-problems') }}#评测状态">?</a></th>
 				{%- if show_time %}
@@ -22,7 +22,8 @@
 		</thead>
 		{% for submission in submissions -%}
 		<tr>
-			<td>{{ submission.id }}</td>
+			<td>{% if g.is_admin %}{{ submission.id }}{% else %}{{ g.utils.obfuscate_submission_id(submission.id) }}{% endif %}</td>
+			{% if g.is_admin %}
 			<td class="status-list__user">
 				{% if g.is_admin -%}
 				<span data-container="body" data-toggle="popover" data-placement="left"
@@ -33,6 +34,7 @@
 			  {%- from 'component/util.html' import display_real_name -%}
 				<span class="text-black-50 float-right"><small>{{ display_real_name(real_name_map[submission.user.student_id]) }}</small></span>
 			</td>
+			{% endif %}
 			<td class="status-list__problem">
 				{%- if show_title[submission] -%}
 				<a href="{{ url_for('.problem', problem=submission.problem_id) }}">{{ submission.problem_id }}. {{ submission.problem.title }}</a>

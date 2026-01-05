@@ -87,14 +87,18 @@
             <hr>
             {%- endif -%}
 
+            {% if g.is_admin %}
             <h4>{{ '排行榜' if contest.ranked else '完成情况' }}</h4>
+            {% else %}
+            <h4>提交情况</h4>
+            {% endif %}
             <div class="table-responsive" id="contest-table-wrapper">
                 <table class="table table-striped table-bordered table-hover" id="contest">
                     <thead>
                     <tr>
-                        {% if contest.ranked %}<th>排名</th>{% endif %}
-                        <th>昵称{% if g.is_admin -%}<span class="small">（点击查看用户名）</span>{%- endif %}</th>
-                        {% if has_real_name -%}<th>实名</th>{%- endif %}
+                        {% if contest.ranked and g.is_admin %}<th>排名</th>{% endif %}
+                        {% if g.is_admin %}<th>昵称{% if g.is_admin -%}<span class="small">（点击查看用户名）</span>{%- endif %}</th>{% endif %}
+                        {% if has_real_name and g.is_admin -%}<th>实名</th>{%- endif %}
                         {% if g.can_read and contest.completion_criteria_type.name != 'none' %}<th>完成情况</th>{% endif %}
                         {% if problems_visible -%}
                         {% for problem in contest.problems -%}
@@ -106,7 +110,7 @@
                         {%- else -%}
                         <th>总通过数</th>
                         {%- endif %}
-                        {% if contest.rank_penalty %}<th>罚时</th>{% endif %}
+                        {% if contest.rank_penalty and g.is_admin %}<th>罚时</th>{% endif %}
                     </tr>
                     </thead>
                     {%- set force_hide_external = contest.type == g.consts.ContestType.EXAM and
@@ -114,8 +118,9 @@
                                                   not contest.rank_all_users and
                                                   my_data is not None and
                                                   not my_data['is_external'] -%}
-                    {%- set show_toggle_external = not contest.rank_all_users and not force_hide_external -%}
+                    {%- set show_toggle_external = not contest.rank_all_users and not force_hide_external and g.is_admin -%}
                     {%- do g.__setattr__('show_toggle_external', show_toggle_external) -%}
+                    {% if g.is_admin %}
                     {% for player in data -%}
                         {%- if not force_hide_external or not player['is_external'] -%}
                         <tr class="{{ 'player--external' if player['is_external'] and not contest.rank_all_users }}">
@@ -201,6 +206,72 @@
                         </tr>
                         {%- endif -%}
                     {%- endfor %}
+                    {% else %}
+                    {# Non-admin users only see their own data #}
+                    {% if my_data is not None %}
+                    <tr>
+                        {% if g.can_read and contest.completion_criteria_type.name != 'none' -%}
+                        {%- if my_data['completed'] is string -%}
+                        <td>错误：{{ my_data['completed'] }}</td>
+                        {%- elif my_data['completed'] == True -%}
+                        {%- if my_data['late_time'] is not None -%}
+                        <td>
+                            已补交<br>
+                            {{ g.utils.readable_time_minutes(g.utils.datetime.fromisoformat(my_data['late_time'])) }}
+                        </td>
+                        {%- else -%}
+                        <td>已完成</td>
+                        {%- endif -%}
+                        {%- else -%}
+                        <td>未完成</td>
+                        {%- endif -%}
+                        {%- endif %}
+                        {% if problems_visible -%}
+                        {% for problem in my_data.problems -%}
+                        {%- set j = loop.index0 -%}
+                            <td data-order="{{ problem['score'] if contest.rank_partial_score and problem['count'] > 0 else 0 }}">
+                                {% if problem['count'] > 0 or problem['pending_count'] > 0 -%}
+                                    {{ problem['score'] if contest.rank_partial_score and problem['count'] > 0 else '' -}}
+                                    {%- macro plural_submit_self(x) -%}
+                                    {%- if x == 1 -%} 1 submission {%- else -%} {{x}} submissions {%- endif -%}
+                                    {%- endmacro -%}
+                                    {%- macro status_self() -%}
+                                        {%- if problem['accepted'] %}
+                                        {%- if problem['late'] %}
+                                            <span class="text-orange" title="Accepted in {{ plural_submit_self(problem['count']) }}, late">(L{{ problem['count'] }}Y)</span>
+                                        {%- else %}
+                                            <span class="text-green" title="Accepted in {{ plural_submit_self(problem['count']) }}">({{ problem['count'] }}Y)</span>
+                                        {%- endif -%}
+                                        {%- else -%}
+                                            {%- if problem['count'] > 0 %}
+                                            {%- if problem['late'] %}
+                                            <span class="text-red" title="{{ plural_submit_self(problem['count']) }}, not accepted, late">(L-{{ problem['count'] }})</span>
+                                            {%- else %}
+                                            <span class="text-red" title="{{ plural_submit_self(problem['count']) }}, not accepted">(-{{ problem['count'] }})</span>
+                                            {%- endif -%}
+                                            {%- endif -%}
+                                            {%- if problem['pending_count'] > 0 %}
+                                            <span class="text-blue" title="{{ plural_submit_self(problem['pending_count']) }} pending">({{ problem['pending_count'] }}?)</span>
+                                            {%- endif -%}
+                                        {%- endif -%}
+                                    {%- endmacro -%}
+                                    {{ status_self() }}
+                                {%- endif %}
+                            </td>
+                        {%- endfor %}
+                        {%- endif %}
+                        {% if contest.rank_partial_score -%}
+                        <td>{{ my_data['score'] }}</td>
+                        {%- else -%}
+                        <td>{{ my_data['ac_count'] }}</td>
+                        {%- endif %}
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="100">你尚未参加本次考试</td>
+                    </tr>
+                    {% endif %}
+                    {% endif %}
                 </table>
             </div>
             {%- if show_toggle_external -%}

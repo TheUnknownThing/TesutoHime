@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from datetime import datetime
 from functools import wraps
+from hashlib import sha256
 from http.client import SEE_OTHER, UNAUTHORIZED
 from math import ceil, inf
 from typing import Any, Iterable, List, NoReturn, Optional
@@ -28,6 +29,44 @@ s3_public = boto3.client('s3', **S3Config.Connections.public, config=cfg)  # typ
 s3_internal = boto3.client('s3', **S3Config.Connections.internal, config=cfg)  # type: ignore
 
 db: _Session = LocalProxy(lambda: g.db)  # type: ignore
+
+# Obfuscation key for submission IDs - used to hide real submission order
+# This is a simple obfuscation, not encryption. The key should be kept secret.
+_SUBMISSION_ID_OBFUSCATION_KEY = b'acmoj_final_exam_2025_obfuscation_key'
+
+def obfuscate_submission_id(submission_id: int) -> str:
+    """
+    Obfuscate a submission ID to prevent users from knowing submission order.
+    Returns a deterministic pseudo-random looking hex string.
+    """
+    # Create a hash-based obfuscation
+    data = f'{submission_id}:{_SUBMISSION_ID_OBFUSCATION_KEY.decode()}'.encode()
+    hash_digest = sha256(data).hexdigest()
+    # Return first 8 characters for a shorter ID
+    return hash_digest[:8].upper()
+
+def deobfuscate_submission_id(obfuscated_id: str, max_id: int = 1000000) -> Optional[int]:
+    """
+    Try to find the original submission ID from an obfuscated ID.
+    This is a brute-force search, so it's not efficient for very large max_id.
+    For the final exam scenario, submissions are limited, so this is acceptable.
+    Returns None if no matching ID is found.
+    """
+    obfuscated_id = obfuscated_id.upper()
+    # For efficiency, we cache the mapping
+    if not hasattr(g, '_obfuscation_cache'):
+        g._obfuscation_cache = {}
+    
+    if obfuscated_id in g._obfuscation_cache:
+        return g._obfuscation_cache[obfuscated_id]
+    
+    # Search for the original ID
+    for i in range(1, max_id + 1):
+        if obfuscate_submission_id(i) == obfuscated_id:
+            g._obfuscation_cache[obfuscated_id] = i
+            return i
+    
+    return None
 
 def generate_s3_public_url(*args, **kwargs):
     url = s3_public.generate_presigned_url(*args, **kwargs)
